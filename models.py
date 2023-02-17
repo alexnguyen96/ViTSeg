@@ -2,9 +2,9 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 from einops import repeat
-from vit_pytorch.vit import Attention, FeedForward
 from vit_pytorch import ViT
-
+from transformers import SegformerDecodeHead, SegformerConfig
+import math
 
 def xavier_init(module: nn.Module,
                 gain: float = 1,
@@ -56,12 +56,48 @@ class PixelShufflePack(nn.Module):
         x = F.pixel_shuffle(x, self.scale_factor)  # channel reduce by scale_factor**2, h&w increase by scale_factor
         return x
 
+
+
+class SegFormerDecoderMod(SegformerDecodeHead):
+    def forward(self, encoder_hidden_states):
+        batch_size = encoder_hidden_states[-1].shape[0]
+
+        all_hidden_states = ()
+        for encoder_hidden_state, mlp in zip(encoder_hidden_states, self.linear_c):
+            if self.config.reshape_last_stage is False and encoder_hidden_state.ndim == 3:
+                height = width = int(math.sqrt(encoder_hidden_state.shape[-1]))
+                encoder_hidden_state = (
+                    encoder_hidden_state.reshape(batch_size, height, width, -1).permute(0, 3, 1, 2).contiguous()
+                )
+
+            # unify channel dimension
+            height, width = encoder_hidden_state.shape[2], encoder_hidden_state.shape[3]
+            encoder_hidden_state = mlp(encoder_hidden_state)
+            encoder_hidden_state = encoder_hidden_state.permute(0, 2, 1)
+            encoder_hidden_state = encoder_hidden_state.reshape(batch_size, -1, height, width)
+            # upsample
+            encoder_hidden_state = nn.functional.interpolate(
+                encoder_hidden_state, size=encoder_hidden_states[0].size()[2:], mode="bilinear", align_corners=False
+            )
+            all_hidden_states += (encoder_hidden_state,)
+
+        hidden_states = self.linear_fuse(torch.cat(all_hidden_states[::-1], dim=1))
+        hidden_states = self.batch_norm(hidden_states)
+        hidden_states = self.activation(hidden_states)
+        hidden_states = self.dropout(hidden_states)
+
+        # logits are of shape (batch_size, num_labels, height/4, width/4)
+        logits = self.classifier(hidden_states)
+
+        return logits
+
+
 class ViTSeg(ViT):
     def __init__(self, *, image_size, patch_size, num_classes, dim, depth, heads, mlp_dim, pool='cls',
-                 channels=3, dim_head=64, dropout=0.1, emb_dropout = 0.1):
-        super(ViTSeg, self).__init__(image_size=image_size, patch_size=patch_size, num_classes=num_classes, dim=dim,
-                                     depth=depth, heads=heads, mlp_dim=mlp_dim, pool=pool, channels=channels,
-                                     dim_head=dim_head, dropout=dropout, emb_dropout=emb_dropout)
+                 channels=3, dim_head=64, dropout=0.1, emb_dropout=0.1):
+        super().__init__(image_size=image_size, patch_size=patch_size, num_classes=num_classes, dim=dim,
+                         depth=depth, heads=heads, mlp_dim=mlp_dim, pool=pool, channels=channels,
+                         dim_head=dim_head, dropout=dropout, emb_dropout=emb_dropout)
         self.dropout_p = dropout
         self.mlp_head = nn.Sequential(
             nn.LayerNorm(dim),
@@ -71,6 +107,7 @@ class ViTSeg(ViT):
         self.linear_fuse = nn.Conv2d(dim, dim, (1, 1), bias=False)
         self.bn = nn.BatchNorm2d(dim, eps=1e-5)
         self.linear_pred = nn.Conv2d(dim, num_classes, kernel_size=(1, 1))
+        self.segformerHead = SegFormerDecoderMod(SegformerConfig())
 
     def forward(self, img):
         x = self.to_patch_embedding(img)
@@ -81,20 +118,27 @@ class ViTSeg(ViT):
         x += self.pos_embedding[:, :(n + 1)]
         x = self.dropout(x)
 
-        x = self.transformer(x)
-        #TODO: make the transformer layer deeper
+        # print('shape before self attention and transform', x.shape)  # [4, 64, 1024]
+        x = self.transformer(x)  # turn x to shape [batch size, number of patches + 1 for the classes, embed_dim]
+        # TODO: make the transformer layer deeper
+        # print('shape after transform', x.shape)  # [4, 65, 1024]
 
-        x = x.mean(dim=1) if self.pool == 'mean' else x[:, 0]
+        # x = x.mean(dim=1) if self.pool == 'mean' else x[:, 0]  #-> turn x into shape [batch size, embedding dim size]
+        # print('shape after this weird mean func', x.shape)  #-> [4, 1024]
 
         # modification starts here
         # x = self.to_latent(x)
         # x = self.mlp_head(x)
 
-        # x = self.upsampler(x)
-        x = self.linear_fuse(torch.cat(x, dim=1))
-        x = self.bn(x)
-        x = F.relu(x, inplace=True)
-        x = F.dropout(x, p=self.dropout_p)
-        x = self.linear_pred(x)
-        return x
+        x = self.segformerHead(x)
 
+
+        #TODO: apply softmax after this to convert the pixels into classes
+
+        # x = self.upsampler(x)
+        # x = self.linear_fuse(torch.cat(x, dim=1))
+        # x = self.bn(x)
+        # x = F.relu(x, inplace=True)
+        # x = F.dropout(x, p=self.dropout_p)
+        # x = self.linear_pred(x)
+        return x

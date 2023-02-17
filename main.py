@@ -28,4 +28,4 @@ img = torch.randn(4, 3, 256, 256)
 
 preds = v(img)
 
-preds
+preds.shape
