@@ -2,9 +2,11 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 from einops import repeat
+from einops.layers.torch import Rearrange
 from vit_pytorch import ViT
 from transformers import SegformerDecodeHead, SegformerConfig
 import math
+
 
 def xavier_init(module: nn.Module,
                 gain: float = 1,
@@ -19,6 +21,9 @@ def xavier_init(module: nn.Module,
     if hasattr(module, 'bias') and module.bias is not None:
         nn.init.constant_(module.bias, bias)
 
+
+def pair(t):
+    return t if isinstance(t, tuple) else (t, t)
 
 class PixelShufflePack(nn.Module):
     """Pixel Shuffle upsample layer.
@@ -35,7 +40,7 @@ class PixelShufflePack(nn.Module):
             channels.
     """
 
-    def __init__(self, in_channels, out_channels, upsample_kernel=4, scale_factor=3):
+    def __init__(self, in_channels, out_channels, upsample_kernel=3, scale_factor=4):
         super(PixelShufflePack, self).__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
@@ -55,7 +60,6 @@ class PixelShufflePack(nn.Module):
         x = self.upsample_conv(x)
         x = F.pixel_shuffle(x, self.scale_factor)  # channel reduce by scale_factor**2, h&w increase by scale_factor
         return x
-
 
 
 class SegFormerDecoderMod(SegformerDecodeHead):
@@ -99,15 +103,24 @@ class ViTSeg(ViT):
                          depth=depth, heads=heads, mlp_dim=mlp_dim, pool=pool, channels=channels,
                          dim_head=dim_head, dropout=dropout, emb_dropout=emb_dropout)
         self.dropout_p = dropout
+        patch_height, patch_width = pair(patch_size)
+
+        patch_dim = channels * patch_height * patch_width
         self.mlp_head = nn.Sequential(
             nn.LayerNorm(dim),
-            nn.Linear(dim, dim)
+            nn.Linear(dim, num_classes)
         )
-        self.upsampler = PixelShufflePack(in_channels=dim, out_channels=num_classes)
+        self.upsampler = PixelShufflePack(in_channels=dim, out_channels=3)
         self.linear_fuse = nn.Conv2d(dim, dim, (1, 1), bias=False)
         self.bn = nn.BatchNorm2d(dim, eps=1e-5)
         self.linear_pred = nn.Conv2d(dim, num_classes, kernel_size=(1, 1))
         self.segformerHead = SegFormerDecoderMod(SegformerConfig())
+        self.reverse_embedding = nn.Sequential(
+            Rearrange('b c (h p1) (w p2) -> b (h w) (p1 p2 c)', p1=patch_height, p2=patch_width),
+            nn.LayerNorm(patch_dim),
+            nn.Linear(patch_dim, dim),
+            nn.LayerNorm(dim),
+        )
 
     def forward(self, img):
         x = self.to_patch_embedding(img)
@@ -121,7 +134,23 @@ class ViTSeg(ViT):
         # print('shape before self attention and transform', x.shape)  # [4, 64, 1024]
         x = self.transformer(x)  # turn x to shape [batch size, number of patches + 1 for the classes, embed_dim]
         # TODO: make the transformer layer deeper
-        # print('shape after transform', x.shape)  # [4, 65, 1024]
+        print('shape after transform', x.shape)  # [4, 65, 1024]
+
+
+
+        x = x.permute(2, 0, 1)  # permute to get the number of channel at the right spot [1024, 4, 65]
+        #TODO: make a for loop to go through each patch in the 65 patches, and convert them back from embedding
+        #       to normal rgb. So maybe try the outchannel to be 3 in the pixel shuffle
+
+
+        #TODO: how do I return the image from embedding space to rgb space
+        #       must have the image in the right shape (b, c, h, w) before upsample
+
+
+
+        # x = self.segformerHead()
+        x = self.upsampler(x)
+        print('shape after upsample', x.shape)  # [3, 4, 260]
 
         # x = x.mean(dim=1) if self.pool == 'mean' else x[:, 0]  #-> turn x into shape [batch size, embedding dim size]
         # print('shape after this weird mean func', x.shape)  #-> [4, 1024]
@@ -130,15 +159,14 @@ class ViTSeg(ViT):
         # x = self.to_latent(x)
         # x = self.mlp_head(x)
 
-        x = self.segformerHead(x)
 
+        x = [x]
+        x = self.linear_fuse(torch.cat(x, dim=1))
+        x = self.bn(x)  #TODO: this one defintiely requires to have the right shape with the batch there
+        x = F.relu(x, inplace=True)
+        x = F.dropout(x, p=self.dropout_p)
+        x = self.linear_pred(x)
+        # TODO: apply softmax after this to convert the pixels into classes
 
-        #TODO: apply softmax after this to convert the pixels into classes
+        return x  # should be the logits
 
-        # x = self.upsampler(x)
-        # x = self.linear_fuse(torch.cat(x, dim=1))
-        # x = self.bn(x)
-        # x = F.relu(x, inplace=True)
-        # x = F.dropout(x, p=self.dropout_p)
-        # x = self.linear_pred(x)
-        return x
