@@ -1,8 +1,28 @@
 import numpy as np
 from PIL import Image
 import torchvision.transforms as transforms
+from helper import ade_palette
+import matplotlib.pyplot as plt
 
-def show_result(img,
+def show_result(prediction, img_path='./ADE_train_00000001.jpg', crop_size=510):
+  img = Image.open(img_path)
+  image = transforms.CenterCrop(crop_size)(img)
+
+  pred_seg = prediction
+  color_seg = np.zeros((pred_seg.shape[0], pred_seg.shape[1], 3), dtype=np.uint8)
+  palette = np.array(ade_palette())
+  for label, color in enumerate(palette):
+      color_seg[pred_seg == label, :] = color
+  color_seg = color_seg[..., ::-1]  # convert to BGR
+
+  img = np.array(image) * 0.5 + color_seg * 0.5  # plot the image with the segmentation map
+  img = img.astype(np.uint8)
+
+  plt.figure(figsize=(15, 10))
+  plt.imshow(img)
+  plt.show()
+
+def save_result(img_path,
                 result,
                 class_num,
                 win_name='',
@@ -24,16 +44,19 @@ def show_result(img,
             Default 0.5.
             Must be in (0, 1] range.
     Returns:
-        img (Tensor): Only if not `show` or `out_file`
+        nothing, save the img to outfile
     """
 
     assert (out_file), 'Please specify where you want the image to be saved'
 
-    img = Image.open(img)
-    # img = transforms.CenterCrop(512)(img)  # crop to get the square
+    img = Image.open(img_path)
+
+    size = result.shape[0]
+
+    img = transforms.CenterCrop(size)(img)  # crop to get the square
     img = np.asarray(img)
     img = img.copy()
-    seg = result[0]  # change this number to view the result of the other inputs
+    seg = result  # change this number to view the result of the other inputs
 
     # Get random state before set seed,
     # and restore random state later.
@@ -42,6 +65,7 @@ def show_result(img,
     # See: https://github.com/open-mmlab/mmdetection/issues/5844
     state = np.random.get_state()
     np.random.seed(42)
+    
     # random palette
     palette = np.random.randint(
         0, 255, size=(class_num, 3))
@@ -60,13 +84,6 @@ def show_result(img,
 
     img = img * (1 - opacity) + color_seg * opacity
     img = img.astype(np.uint8)
-    # if out_file specified, do not show image in window
-    # if out_file is not None:
-    #     show = False
-
     data = Image.fromarray(img)
     data.save(out_file)
-    # if show:
-    #     mmcv.imshow(img, win_name, wait_time)
-    # if out_file is not None:
-    #     mmcv.imwrite(img, out_file)
+

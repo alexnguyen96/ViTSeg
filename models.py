@@ -4,9 +4,7 @@ import torch.nn.functional as F
 from einops import repeat
 from einops.layers.torch import Rearrange
 from vit_pytorch import ViT
-from transformers import SegformerDecodeHead, SegformerConfig
 import math
-
 
 def xavier_init(module: nn.Module,
                 gain: float = 1,
@@ -58,115 +56,63 @@ class PixelShufflePack(nn.Module):
 
     def forward(self, x):
         x = self.upsample_conv(x)
-        x = F.pixel_shuffle(x, self.scale_factor)  # channel reduce by scale_factor**2, h&w increase by scale_factor
+        # pixel_shuffle: channel reduce by scale_factor**2, h&w increase by scale_factor
+        x = F.pixel_shuffle(x, self.scale_factor)  
         return x
 
 
-class SegFormerDecoderMod(SegformerDecodeHead):
-    def forward(self, encoder_hidden_states):
-        batch_size = encoder_hidden_states[-1].shape[0]
-
-        all_hidden_states = ()
-        for encoder_hidden_state, mlp in zip(encoder_hidden_states, self.linear_c):
-            if self.config.reshape_last_stage is False and encoder_hidden_state.ndim == 3:
-                height = width = int(math.sqrt(encoder_hidden_state.shape[-1]))
-                encoder_hidden_state = (
-                    encoder_hidden_state.reshape(batch_size, height, width, -1).permute(0, 3, 1, 2).contiguous()
-                )
-
-            # unify channel dimension
-            height, width = encoder_hidden_state.shape[2], encoder_hidden_state.shape[3]
-            encoder_hidden_state = mlp(encoder_hidden_state)
-            encoder_hidden_state = encoder_hidden_state.permute(0, 2, 1)
-            encoder_hidden_state = encoder_hidden_state.reshape(batch_size, -1, height, width)
-            # upsample
-            encoder_hidden_state = nn.functional.interpolate(
-                encoder_hidden_state, size=encoder_hidden_states[0].size()[2:], mode="bilinear", align_corners=False
-            )
-            all_hidden_states += (encoder_hidden_state,)
-
-        hidden_states = self.linear_fuse(torch.cat(all_hidden_states[::-1], dim=1))
-        hidden_states = self.batch_norm(hidden_states)
-        hidden_states = self.activation(hidden_states)
-        hidden_states = self.dropout(hidden_states)
-
-        # logits are of shape (batch_size, num_labels, height/4, width/4)
-        logits = self.classifier(hidden_states)
-
-        return logits
-
-
-class ViTSeg(ViT):
+class Decoder(ViT):
     def __init__(self, *, image_size, patch_size, num_classes, dim, depth, heads, mlp_dim, pool='cls',
-                 channels=3, dim_head=64, dropout=0.1, emb_dropout=0.1):
+                 channels=3, dim_head=64, dropout=0.1, emb_dropout=0.1, scale_factor=4):
         super().__init__(image_size=image_size, patch_size=patch_size, num_classes=num_classes, dim=dim,
                          depth=depth, heads=heads, mlp_dim=mlp_dim, pool=pool, channels=channels,
                          dim_head=dim_head, dropout=dropout, emb_dropout=emb_dropout)
         self.dropout_p = dropout
         patch_height, patch_width = pair(patch_size)
-
         patch_dim = channels * patch_height * patch_width
-        self.mlp_head = nn.Sequential(
-            nn.LayerNorm(dim),
-            nn.Linear(dim, num_classes)
+        self.patch_num = image_size // patch_height
+        num_patches = (image_size // patch_height) * (image_size // patch_width)
+
+         # TODO: scale 4 times with scale factor 4 -> to get to 4k. Figure out the best out_channel num -> chatGPT?
+        # TODO calculation to get the right img size in the end, -> find out outchanel, scalefact, kernel
+        out_chan = [dim*i for i in range(2, 5)]
+        self.upsampler = nn.Sequential(
+          PixelShufflePack(in_channels=dim, out_channels=out_chan[0], scale_factor=scale_factor),
+          PixelShufflePack(in_channels=out_chan[0], out_channels=out_chan[1], scale_factor=4),
+          PixelShufflePack(in_channels=out_chan[1], out_channels=out_chan[2], scale_factor=2),
+          PixelShufflePack(in_channels=out_chan[2], out_channels=num_classes, scale_factor=1)
         )
-        self.upsampler = PixelShufflePack(in_channels=dim, out_channels=3)
-        self.linear_fuse = nn.Conv2d(dim, dim, (1, 1), bias=False)
-        self.bn = nn.BatchNorm2d(dim, eps=1e-5)
-        self.linear_pred = nn.Conv2d(dim, num_classes, kernel_size=(1, 1))
-        self.segformerHead = SegFormerDecoderMod(SegformerConfig())
-        self.reverse_embedding = nn.Sequential(
-            Rearrange('b c (h p1) (w p2) -> b (h w) (p1 p2 c)', p1=patch_height, p2=patch_width),
-            nn.LayerNorm(patch_dim),
-            nn.Linear(patch_dim, dim),
-            nn.LayerNorm(dim),
-        )
+        self.softmax = nn.Softmax(dim=1)
 
     def forward(self, img):
-        x = self.to_patch_embedding(img)
+        x = self.to_patch_embedding(img)  # shape [4, 64, 1024]
         b, n, _ = x.shape
 
+        # positional embedding
         cls_tokens = repeat(self.cls_token, '1 1 d -> b 1 d', b=b)
         x = torch.cat((cls_tokens, x), dim=1)
         x += self.pos_embedding[:, :(n + 1)]
         x = self.dropout(x)
 
-        # print('shape before self attention and transform', x.shape)  # [4, 64, 1024]
-        x = self.transformer(x)  # turn x to shape [batch size, number of patches + 1 for the classes, embed_dim]
+        # self attention
+        x = self.transformer(x)  
         # TODO: make the transformer layer deeper
-        print('shape after transform', x.shape)  # [4, 65, 1024]
 
+        # remove the class token
+        x = x[:, 1:, :]  # shape [4, 64, 1024]
 
+        batch_num = x.shape[0]
+        height = width = self.patch_num
+        x = x.permute(0, 2, 1)  #shape [4, 1024, 64]
+        x = x.reshape(batch_num, -1, height, width)  # shape [4, 1024, 8, 8]
 
-        x = x.permute(2, 0, 1)  # permute to get the number of channel at the right spot [1024, 4, 65]
-        #TODO: make a for loop to go through each patch in the 65 patches, and convert them back from embedding
-        #       to normal rgb. So maybe try the outchannel to be 3 in the pixel shuffle
-
-
-        #TODO: how do I return the image from embedding space to rgb space
-        #       must have the image in the right shape (b, c, h, w) before upsample
-
-
-
-        # x = self.segformerHead()
+        # print("x shape before upsample", x.shape)
         x = self.upsampler(x)
-        print('shape after upsample', x.shape)  # [3, 4, 260]
+        # print("x shape AFTER upsample", x.shape)
 
-        # x = x.mean(dim=1) if self.pool == 'mean' else x[:, 0]  #-> turn x into shape [batch size, embedding dim size]
-        # print('shape after this weird mean func', x.shape)  #-> [4, 1024]
-
-        # modification starts here
-        # x = self.to_latent(x)
-        # x = self.mlp_head(x)
-
-
-        x = [x]
-        x = self.linear_fuse(torch.cat(x, dim=1))
-        x = self.bn(x)  #TODO: this one defintiely requires to have the right shape with the batch there
-        x = F.relu(x, inplace=True)
-        x = F.dropout(x, p=self.dropout_p)
-        x = self.linear_pred(x)
-        # TODO: apply softmax after this to convert the pixels into classes
-
+        # classifying pixelwise
+        x = self.softmax(x)
+        x = x.argmax(dim=1)
         return x  # should be the logits
+
 
