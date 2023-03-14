@@ -1,3 +1,61 @@
+import torch
+from torch import nn
+
+def xavier_init(module: nn.Module,
+                gain: float = 1,
+                bias: float = 0,
+                distribution: str = 'normal') -> None:
+    assert distribution in ['uniform', 'normal']
+    if hasattr(module, 'weight') and module.weight is not None:
+        if distribution == 'uniform':
+            nn.init.xavier_uniform_(module.weight, gain=gain)
+        else:
+            nn.init.xavier_normal_(module.weight, gain=gain)
+    if hasattr(module, 'bias') and module.bias is not None:
+        nn.init.constant_(module.bias, bias)
+
+
+def pair(t):
+    return t if isinstance(t, tuple) else (t, t)
+
+class PixelShufflePack(nn.Module):
+    """Pixel Shuffle upsample layer.
+
+    This module packs `F.pixel_shuffle()` and a nn.Conv2d module together to
+    achieve a simple upsampling with pixel shuffle.
+
+    Args:
+        in_channels (int): Number of input channels.
+        out_channels (int): Number of output channels.
+        scale_factor (int): Upsample ratio. Typically, 2 to 4.
+            Depends on the problem. 2 is often enough but if the problem requires more fine grain, use 4
+        upsample_kernel (int): Kernel size of the conv layer to expand the
+            channels.
+    """
+
+    def __init__(self, in_channels, out_channels, upsample_kernel=3, scale_factor=4):
+        super(PixelShufflePack, self).__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.scale_factor = scale_factor
+        self.upsample_kernel = upsample_kernel
+        self.upsample_conv = nn.Conv2d(
+            self.in_channels,
+            self.out_channels * scale_factor * scale_factor,
+            self.upsample_kernel,
+            padding=(self.upsample_kernel - 1) // 2)
+        self.init_weights()
+
+    def init_weights(self):
+        xavier_init(self.upsample_conv, distribution='uniform')
+
+    def forward(self, x):
+        x = self.upsample_conv(x)
+        # pixel_shuffle: channel reduce by scale_factor**2, h&w increase by scale_factor
+        x = F.pixel_shuffle(x, self.scale_factor)  
+        return x
+
+
 def ade_palette():
         #ADE20K palette that maps each class to RGB values.\"\"\"\n",
         return [[120, 120, 120], [180, 120, 120], [6, 230, 230], [80, 50, 50],

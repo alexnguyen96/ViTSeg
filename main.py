@@ -1,14 +1,13 @@
 import torch
-from mymodels import Decoder
-from visualizer import show_result, save_result
 import torchvision.transforms as transforms
 import numpy as np
-
 from PIL import Image
-
 import os
 import requests
 import matplotlib.pyplot as plt
+
+from visualizer import show_result, save_result
+
 
 device = torch.device("cpu")
 
@@ -51,3 +50,5 @@ save_result(img_path='./ADE_train_00000001.jpg',
             result=preds[0],
             class_num=23,
             out_file="./hiiiii.jpg")
+
+
