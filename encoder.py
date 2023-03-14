@@ -5,12 +5,20 @@ import math
 
 class SegFormerEncoder(nn.Module):
     #chatGPT...test it
-    def __init__(self, in_channels, hidden_size, num_layers, num_heads, feedforward_size, dropout):
+    def __init__(self, patch_size, in_channels, hidden_size, num_layers, num_heads, feedforward_size, dropout):
         super().__init__()
 
         # Input Embedding
-        self.conv = nn.Conv2d(in_channels, hidden_size, kernel_size=3, padding=1)
-        self.fc = nn.Linear(hidden_size * 64 * 64, hidden_size)
+        # self.conv = nn.Conv2d(in_channels, hidden_size, kernel_size=3, padding=1)
+        # self.fc = nn.Linear(hidden_size * 64 * 64, hidden_size)
+
+        patch_dim = in_channels * patch_size * patch_size
+        self.to_patch_embedding = nn.Sequential(
+            Rearrange('b c (h p1) (w p2) -> b (h w) (p1 p2 c)', p1 = patch_height, p2 = patch_width),
+            nn.LayerNorm(patch_dim),
+            nn.Linear(patch_dim, hidden_size),
+            nn.LayerNorm(hidden_size),
+        )
 
         # Positional Encoding
         self.pos_enc = PositionalEncoding(hidden_size, dropout)
@@ -27,9 +35,10 @@ class SegFormerEncoder(nn.Module):
 
     def forward(self, x):
         # Input Embedding
-        x = self.conv(x)
-        x = x.flatten(start_dim=2)
-        x = self.fc(x)
+        # x = self.conv(x)
+        # x = x.flatten(start_dim=2)
+        # x = self.fc(x)
+        x = self.to_patch_embedding(img)
 
         # Positional Encoding
         x = self.pos_enc(x)

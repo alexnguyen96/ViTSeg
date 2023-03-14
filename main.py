@@ -6,6 +6,8 @@ import os
 import requests
 import matplotlib.pyplot as plt
 
+from models import VitSeg
+
 from visualizer import show_result, save_result
 
 
@@ -23,17 +25,18 @@ img = transforms.CenterCrop(512)(img)  # crop to get the square
 img = transforms.ToTensor()(img)  # turn it into a tensor
 img = torch.FloatTensor(img)[None, :]  # make it a batch
 
-v = Decoder(
+v = VitSeg(
     image_size=512,
     patch_size=32,
     num_classes=23,
-    dim=1024,
-    depth=6,
-    heads=16,
+    hidden_size=1024,
+    num_layers=6,
+    num_heads=16,
     mlp_dim=2048,
     dropout=0.1,
     scale_factor=4,
 )
+
 
 # dummy_result = torch.randint(23, (1, 512, 683))
 
