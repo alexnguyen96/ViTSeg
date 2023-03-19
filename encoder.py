@@ -10,12 +10,12 @@ from segformer_aiden.segformer.backbones import mit_b0 as SegFormerEncoder #Aide
 from timm.models.vision_transformer import PatchEmbed, Block
 from helper import get_2d_sincos_pos_embed
 
+
 class MAEEncoder(nn.Module):
     """ Masked Autoencoder with VisionTransformer backbone
     """
     def __init__(self, img_size=224, patch_size=16, in_chans=3,
                  embed_dim=1024, depth=24, num_heads=16,
-                 decoder_embed_dim=512, decoder_depth=8, decoder_num_heads=16,
                  mlp_ratio=4., norm_layer=nn.LayerNorm, norm_pix_loss=False):
         super().__init__()
 
