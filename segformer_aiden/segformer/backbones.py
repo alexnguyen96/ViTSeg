@@ -4,7 +4,7 @@ import torch.nn as nn
 from einops import rearrange
 from torch.nn.functional import dropout, gelu
 
-from segformer.segformer.timm import trunc_normal_, drop_path
+from segformer_aiden.segformer.timm import trunc_normal_, drop_path
 
 Tuple4i = Tuple[int, int, int, int]
 

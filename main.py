@@ -7,8 +7,8 @@ import requests
 import matplotlib.pyplot as plt
 
 from models import VitSeg
-
 from visualizer import show_result, save_result
+from helper import show_image  # for MAE 1 pass run
 
 device = torch.device("cpu")
 
@@ -16,41 +16,61 @@ if torch.cuda.is_available():
     device = torch.device("cuda:0")
     torch.cuda.set_device(device)
 
+# LOADING DATA
+imagenet_mean = np.array([0.485, 0.456, 0.406])
+imagenet_std = np.array([0.229, 0.224, 0.225])
 
-img = Image.open('./ADE_train_00000001.jpg')
+img_url = './data/ade_256' 
+img = Image.open(img_url)
+# img = Image.open(requests.get(img_url, stream=True).raw)
+img = img.resize((224, 224))
+img = np.array(img) / 255.
 
-# img = Image.open('./GF2_PMS1__L1A0000564539-MSS1.tiff')
-img = transforms.CenterCrop(512)(img)  # crop to get the square
-img = transforms.ToTensor()(img)  # turn it into a tensor
-img = torch.FloatTensor(img)[None, :]  # make it a batch
+assert img.shape == (224, 224, 3)
 
-v = VitSeg(
-    image_size=512,
-    patch_size=32,
-    num_classes=23,
-    hidden_size=1024,
-    num_layers=6,
-    feedforward_size=8,
-    num_heads=16,
-    mlp_dim=2048,
-    dropout=0.1,
-)
+# normalize by ImageNet mean and std
+img = img - imagenet_mean
+img = img / imagenet_std
 
+# plt.rcParams['figure.figsize'] = [5, 5]
+# show_image(torch.tensor(img))
 
-# dummy_result = torch.randint(23, (1, 512, 683))
-
-#TODO: deal with sliding window, for images that are not square. for now just crop the square out of it
-
-preds = v(img)
-
-preds.shape
-
-# pred_seg = preds.argmax(dim=1)
-print('prediction', preds.shape)
-
-save_result(img_path='./ADE_train_00000001.jpg',
-            result=preds[0],
-            class_num=23,
-            out_file="./hiiiii.jpg")
+# LOADING THE WEIGHT TO MODEL
+!wget -nc https://dl.fbaipublicfiles.com/mae/visualize/mae_visualize_vit_large.pth
+# runcmd('wget -nc https://dl.fbaipublicfiles.com/mae/visualize/mae_visualize_vit_large.pth')
 
 
+chkpt_dir = 'mae_visualize_vit_large.pth'
+
+mae = VitSeg(
+        patch_size=16, embed_dim=768, depth=12, num_heads=12,
+        decoder_embed_dim=512, decoder_depth=8, decoder_num_heads=16,
+        mlp_ratio=4, norm_layer=partial(nn.LayerNorm, eps=1e-6))
+
+model = mae()
+# load model
+checkpoint = torch.load(chkpt_dir, map_location='cpu')
+msg = model.load_state_dict(checkpoint['model'], strict=False)
+print(msg)
+model_mae = model
+print('Model loaded.')
+
+
+# MAKE RANDOM MASK REPRODUCIBLE (COMMENT OUT TO MAKE IT CHANGE)
+torch.manual_seed(2)
+print('MAE with pixel reconstruction:')
+
+
+# RUN THE MODEL
+x = torch.tensor(img)
+
+# make it a batch-like
+x = x.unsqueeze(dim=0)
+x = torch.einsum('nhwc->nchw', x)
+
+# run MAE
+y = model(x.float(), mask_ratio=0.75)
+y = model.unpatchify(y)
+y = torch.einsum('nchw->nhwc', y).detach().cpu()
+
+print("shape of MAE encoder output", y.shape)
