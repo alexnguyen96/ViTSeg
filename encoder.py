@@ -2,6 +2,8 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 import math
+from einops.layers.torch import Rearrange
+from einops import rearrange, repeat
 
 class SegFormerEncoder(nn.Module):
     #chatGPT...test it
@@ -9,12 +11,12 @@ class SegFormerEncoder(nn.Module):
         super().__init__()
 
         # Input Embedding
-        # self.conv = nn.Conv2d(in_channels, hidden_size, kernel_size=3, padding=1)
-        # self.fc = nn.Linear(hidden_size * 64 * 64, hidden_size)
+        self.conv = nn.Conv2d(in_channels, hidden_size, kernel_size=3, padding=1)
+        self.fc = nn.Linear(hidden_size * 16 * 16, hidden_size)
 
         patch_dim = in_channels * patch_size * patch_size
         self.to_patch_embedding = nn.Sequential(
-            Rearrange('b c (h p1) (w p2) -> b (h w) (p1 p2 c)', p1 = patch_height, p2 = patch_width),
+            Rearrange('b c (h p1) (w p2) -> b (h w) (p1 p2 c)', p1 = patch_size, p2 = patch_size),
             nn.LayerNorm(patch_dim),
             nn.Linear(patch_dim, hidden_size),
             nn.LayerNorm(hidden_size),
@@ -33,12 +35,16 @@ class SegFormerEncoder(nn.Module):
         for _ in range(num_layers):
             self.skip_convs.append(nn.Conv2d(hidden_size, hidden_size, kernel_size=1))
 
-    def forward(self, x):
+    def forward(self, img):
         # Input Embedding
-        # x = self.conv(x)
+        # x = self.conv(img)
         # x = x.flatten(start_dim=2)
         # x = self.fc(x)
+        # print("x size with gpt embedding", x.shape) # [1, 1024, 1024]
+
         x = self.to_patch_embedding(img)
+        print("x size with vit embedding", x.shape) # [1, 256, 1024]
+
 
         # Positional Encoding
         x = self.pos_enc(x)

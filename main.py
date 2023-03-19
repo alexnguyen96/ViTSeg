@@ -10,7 +10,6 @@ from models import VitSeg
 
 from visualizer import show_result, save_result
 
-
 device = torch.device("cpu")
 
 if torch.cuda.is_available():
@@ -31,10 +30,10 @@ v = VitSeg(
     num_classes=23,
     hidden_size=1024,
     num_layers=6,
+    feedforward_size=8,
     num_heads=16,
     mlp_dim=2048,
     dropout=0.1,
-    scale_factor=4,
 )
 
 

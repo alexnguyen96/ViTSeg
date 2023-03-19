@@ -6,14 +6,18 @@ import math
 from decoder import Decoder
 from encoder import SegFormerEncoder
 
+from segformer.segformer.backbones import mit_b0 as Aiden_Seg
+
 class VitSeg(nn.Module):
     def __init__(self, image_size, patch_size, hidden_size, num_layers, num_heads, mlp_dim, 
                  num_classes, feedforward_size, in_channels=3, dropout=0.1):
-        # self.mae_encoder = ...
         super().__init__()
-        self.seg_encoder = SegFormerEncoder(patch_size, in_channels, hidden_size, num_layers, num_heads, feedforward_size, dropout)
+        # self.mae_encoder = ...
+
+        # self.seg_encoder = SegFormerEncoder(patch_size, in_channels, hidden_size, num_layers, num_heads, feedforward_size, dropout)
         # -> how many channel is it outputing??
 
+        self.seg_encoder = Aiden_Seg()
 
         # TODO: scale 4 times with scale factor 4 -> to get to 4k. Figure out the best out_channel num -> chatGPT?
         # TODO calculation to get the right img size in the end, -> find out outchanel, scalefact, kernel
@@ -22,10 +26,19 @@ class VitSeg(nn.Module):
 
     def forward(self, img):
         x = self.seg_encoder(img)
+        for y in x:
+            print('y shape', y.shape)
+            #ok, for each encoder size, use the decoder to get to the same size, which is 4k
+
+        # y shape torch.Size([1, 32, 128, 128])
+        # y shape torch.Size([1, 64, 64, 64])
+        # y shape torch.Size([1, 160, 32, 32])
+        # y shape torch.Size([1, 256, 16, 16])
+
+        # print("x shape after seg encoder", x.shape)
         # y = self.mae_encoder(img)
         #TODO: concat x and y -> z
         # x = z
-        println("shape after seg encoder", x.shape)
         x = self.decoder(x)
 
         return x
