@@ -21,13 +21,11 @@ class Decoder(nn.Module):
         self.softmax = nn.Softmax(dim=1)
 
     def forward(self, feature_tensor):
+        x = feature_tensor
+        print("shape of input before applying decoder:", x.shape)
+
         # so upto here: we are done with self attention and positional embedding
         # now we need remove class token
-
-
-        #TODO: print the shape first to see what it is
-
-        x = feature_tensor
         # remove the class token
         x = x[:, 1:, :]  # shape [4, 64, 1024]
 
