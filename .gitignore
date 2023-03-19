@@ -5,3 +5,5 @@ data/sat_4k/
 .idea
 
 .DS_Store
+
+*.pth
