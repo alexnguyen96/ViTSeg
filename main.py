@@ -42,6 +42,7 @@ img = img.permute(1, 2, 0)
 # LOADING THE WEIGHT TO MODEL
 # wget -nc https://dl.fbaipublicfiles.com/mae/visualize/mae_visualize_vit_large.pth
 
+# docker run --rm -it --entrypoint bash -v $(pwd):/app alex-image
 
 chkpt_dir = 'mae_visualize_vit_large.pth'
 

@@ -9,5 +9,9 @@ dependencies:
 - scipy=1.7.1
 - pytorch::torchvision=0.11.1=py39_cu113
 - tqdm=4.62.3
-- einops=0.6.0
-- timm==0.6.12
+- pip:
+  - einops
+  - timm
+  - math
+  - wget
+  - matplotlib
