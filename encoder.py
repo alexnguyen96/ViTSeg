@@ -14,9 +14,8 @@ from helper import get_2d_sincos_pos_embed
 class MAEEncoder(nn.Module):
     """ Masked Autoencoder with VisionTransformer backbone
     """
-    def __init__(self, img_size=224, patch_size=16, in_chans=3,
-                 embed_dim=1024, depth=24, num_heads=16,
-                 mlp_ratio=4., norm_layer=nn.LayerNorm, norm_pix_loss=False):
+    def __init__(self, img_size=224, patch_size=16, in_chans=3, embed_dim=1024, depth=24, num_heads=16, mlp_ratio=4.,
+                 decoder_embed_dim=512, decoder_depth=8, decoder_num_heads=16, norm_layer=nn.LayerNorm, norm_pix_loss=False):
         super().__init__()
 
         # --------------------------------------------------------------------------
@@ -31,8 +30,25 @@ class MAEEncoder(nn.Module):
             Block(embed_dim, num_heads, mlp_ratio, qkv_bias=True, norm_layer=norm_layer)
             for i in range(depth)])
         self.norm = norm_layer(embed_dim)
-        # --------------------------------------------------------------------------
 
+        # --------------------------------------------------------------------------
+        # --------------------------------------------------------------------------
+        # MAE decoder specifics
+
+        # self.decoder_norm = norm_layer(decoder_embed_dim)
+        #
+        # self.decoder_embed = nn.Linear(embed_dim, decoder_embed_dim, bias=True)
+        #
+        # self.mask_token = nn.Parameter(torch.zeros(1, 1, decoder_embed_dim))
+        #
+        # self.decoder_pos_embed = nn.Parameter(torch.zeros(1, num_patches + 1, decoder_embed_dim),
+        #                                       requires_grad=False)  # fixed sin-cos embedding
+        #
+        # self.decoder_blocks = nn.ModuleList([
+        #     Block(decoder_embed_dim, decoder_num_heads, mlp_ratio, qkv_bias=True, norm_layer=norm_layer)
+        #     for i in range(decoder_depth)])
+
+        # --------------------------------------------------------------------------
         self.norm_pix_loss = norm_pix_loss
 
         self.initialize_weights()
@@ -137,6 +153,29 @@ class MAEEncoder(nn.Module):
         for blk in self.blocks:
             x = blk(x)
         x = self.norm(x)
+
+        '''
+        # THEIR DECODER PART
+        # embed tokens
+        x = self.decoder_embed(x)
+
+        # append mask tokens to sequence
+        mask_tokens = self.mask_token.repeat(x.shape[0], ids_restore.shape[1] + 1 - x.shape[1], 1)
+        x_ = torch.cat([x[:, 1:, :], mask_tokens], dim=1)  # no cls token
+        x_ = torch.gather(x_, dim=1, index=ids_restore.unsqueeze(-1).repeat(1, 1, x.shape[2]))  # unshuffle
+        x = torch.cat([x[:, :1, :], x_], dim=1)  # append cls token
+
+        # add pos embed
+        x = x + self.decoder_pos_embed
+
+        # apply Transformer blocks
+        for blk in self.decoder_blocks:
+            x = blk(x)
+        x = self.decoder_norm(x)
+        '''
+
+        # remove cls token
+        x = x[:, 1:, :]
 
         return x, mask, ids_restore
 

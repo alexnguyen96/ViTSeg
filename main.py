@@ -46,9 +46,8 @@ img = img.permute(1, 2, 0)
 chkpt_dir = 'mae_visualize_vit_large.pth'
 
 mae = VitSeg(
-        img_size=256, patch_size=16, embed_dim=1024, depth=2, num_heads=8,
-        decoder_embed_dim=512, decoder_depth=8, decoder_num_heads=16,
-        mlp_ratio=4)
+        img_size=256, patch_size=16, embed_dim=1024, depth=2, num_heads=8, class_num=23,
+        decoder_embed_dim=512, decoder_depth=8, decoder_num_heads=16, mlp_ratio=4)
 
 # load model
 # checkpoint = torch.load(chkpt_dir, map_location='cpu')
@@ -59,8 +58,6 @@ model = mae
 
 # MAKE RANDOM MASK REPRODUCIBLE (COMMENT OUT TO MAKE IT CHANGE)
 torch.manual_seed(2)
-print('MAE with pixel reconstruction:')
-
 
 # PREP THE DATA
 x = torch.tensor(img)
@@ -71,5 +68,6 @@ x = torch.einsum('nhwc->nchw', x)
 
 # run MAE
 y = model(x.float())
+
 
 print("shape of MAE encoder output", y.shape)  # [1, 65, 768]
